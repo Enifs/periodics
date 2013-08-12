@@ -33,7 +33,7 @@ function addtoany_node_view($node, $view_mode) {
   $links = array();
   $types = variable_get('addtoany_nodetypes', array('page', 'article'));
   $teaser = ($view_mode == 'teaser') ? TRUE : FALSE;
-  $show  = (!empty($node->type) && in_array($node->type, $types) && ($node->status == 1) && 
+  $show  = (!empty($node->type) && in_array($node->type, $types, TRUE) && ($node->status == 1) && 
            (($teaser && variable_get('addtoany_display_in_teasers', '1') != 0) ||
            (!$teaser && variable_get('addtoany_display_in_nodelink', '1') != 0)));
            
@@ -44,7 +44,7 @@ function addtoany_node_view($node, $view_mode) {
       );
   }
   
-  $show  = (!empty($node->type) && in_array($node->type, $types) && ($node->status == 1) && variable_get('addtoany_display_in_nodecont', '0'));
+  $show  = (!empty($node->type) && in_array($node->type, $types, TRUE) && ($node->status == 1) && variable_get('addtoany_display_in_nodecont', '0'));
   $weight = variable_get('addtoany_display_weight', 40);
       
   if ($show) {
