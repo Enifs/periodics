@@ -1,0 +1,6 @@
+
+name = _Blue Lagoon plus subscriptions
+description = Based on the Blue Lagoon colors of Garland.
+version = 2.x
+core = 7.x
+base style = naked

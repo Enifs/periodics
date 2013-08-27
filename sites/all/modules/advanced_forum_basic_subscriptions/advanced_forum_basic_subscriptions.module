@@ -1,0 +1,620 @@
+﻿<?php
+/**
+ * @file
+ * Advanced Forum Basic Subscriptions.
+ *
+ * This module provides minimalistic subscription functionality for Advanced
+ * Forums. Subscriptions can be set at various levels: global, forum or topic.
+ * Users are notified of new forums, new topics and new comments depending on
+ * what they are subscribed to.
+ * A subscriptions overview tab is added to the Forum tab menu, which allows
+ * users to view and/or cancel their subscriptions.
+ *
+ * This module provides a new set of Advanced Forum styles that show
+ * subscribe/unsubscribe links on the Advanced Forum pages.
+ */
+
+/**
+ * Implements hook_ctools_plugin_directory().
+ * Register our styles directory for Advanced Forum
+ */
+function advanced_forum_basic_subscriptions_ctools_plugin_directory($module, $plugin) {
+  if ($module == 'advanced_forum') {
+    return 'styles';
+  }
+}
+
+/**
+ * Preprocess the forum list and create additional subscription variables for
+ * the template
+ */
+function advanced_forum_basic_subscriptions_preprocess_forum_list(&$variables) {
+  $variables['link_subscribe_global'] = advanced_forum_basic_subscriptions_makelink(0, 0);
+  $tables = $variables['tables'];
+  foreach ($tables as $tableid => $table) {
+    $items = $table['items'];
+    foreach ($items as $tid => $item) {
+      $item->subscribe = advanced_forum_basic_subscriptions_makelink($item->tid, 0);
+      $variables['tables'][$tableid]['items'][$tid] = $item;
+    }
+  }
+}
+
+/**
+ * Preprocess the topic list to add subscription variables for the template
+ */
+function advanced_forum_basic_subscriptions_preprocess_advanced_forum_topic_list_view(&$variables) {
+  $rows = $variables['rows'];
+  foreach ($rows as $rowid => $row) {
+    // somehow we need to determine the node id from the title hyperlink.
+    // which  will contain either the node id or an alias
+    $title = $row['title'];
+    // the first hyperlink should contain the node path
+    global $base_path;
+    $temp = '<a href="' . $base_path;
+    $i = strpos($title, $temp);
+    $j = strpos($title, '"', $i + 10);
+    $path = substr($title, $i + strlen($temp), $j - ($i + strlen($temp)));
+    // is it a node reference or an alias?
+    $i = strpos($path, 'node/');
+    if ($i === FALSE) {
+      $path = drupal_lookup_path('source', $path);
+    }
+    // retrieve the node id
+    $i = strpos($path, 'node/');
+    $nid = intval(substr($path, $i + 5));
+    // load the node details
+    $node = node_load($nid);
+    // and add subscribe hyperlink to this row in the view
+    $variables['rows'][$rowid]['subscribe'] = advanced_forum_basic_subscriptions_makelink($node->forum_tid, $nid);
+  }
+  $variables['fields']['subscribe'] = 'subscribe';
+  $variables['header']['subscribe'] = t('Subscribe');
+  $variables['header_classes']['subscribe'] = 'views-field views-field-subscribe';
+}
+
+/**
+ * Implements hook_menu().
+ */
+function advanced_forum_basic_subscriptions_menu() {
+  // Create callbacks for menu items.
+  $menu['forum/subscribe'] = array(
+    'title' => 'Forum subscribe',
+    'description' => 'Forum subscribe.',
+    'page callback' => 'advanced_forum_basic_subscriptions_record',
+    'page arguments' => array(1, 2, 3),
+    'access callback' => 'user_is_logged_in',
+    'type' => MENU_CALLBACK,
+  );
+  $menu['forum/unsubscribe'] = array(
+    'title' => 'Forum unsubscribe',
+    'description' => 'Forum unsubscribe.',
+    'page callback' => 'advanced_forum_basic_subscriptions_record',
+    'page arguments' => array(1, 2, 3),
+    'access callback' => 'user_is_logged_in',
+    'type' => MENU_CALLBACK,
+  );
+  $menu['forum/mysubs'] = array(
+    'title' => 'My Subs',
+    'description' => 'List active subscriptions for a user.',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('advanced_forum_basic_subscriptions_mysubs'),
+    'access callback' => 'user_is_logged_in',
+    'type' => MENU_LOCAL_TASK,
+    'weight' => 10,
+  );
+  return $menu;
+}
+
+/**
+ * Menu callback; subscribe/unsubscribe to Forum(s) and/or Topic(s).
+ *
+ * @param $action
+ *   The action to perform - subscribe or unsubscribe.
+ * @param $tid
+ *   A term id representing the Forum.
+ *   The special value zero represents global subscription.
+ * @param $nid
+ *   A node id representing the Forum Topic.
+ *   The special value zero represents whole Forum subscription.
+ */
+function advanced_forum_basic_subscriptions_record($action, $tid, $nid) {
+
+  // Action any subscription changes.
+  if ($action == 'subscribe') {
+    $result = advanced_forum_basic_subscriptions_subscribe($tid, $nid);
+  }
+  elseif ($action == 'unsubscribe') {
+    $result = advanced_forum_basic_subscriptions_unsubscribe($tid, $nid);
+  }
+
+  if (isset($result) && $result == FALSE) {
+    drupal_set_message(t('An error occured during the subscription process due to an invalid Forum id and/or Topic id.'));
+  }
+
+  // Return to the page we came from.
+  $query = drupal_get_query_parameters();
+  if (isset($query['destination'])) {
+    drupal_goto($query['destination']);
+  }
+  else {
+    drupal_goto('forum');
+  }
+}
+
+/**
+ * Implements hook_term_delete().
+ */
+function advanced_forum_basic_subscriptions_taxonomy_term_delete($term) {
+  // Delete this forum and all it's topics from subscriptions.
+  $deleted = db_delete('advanced_forum_basic_subscriptions')
+    ->condition('tid', $term->tid)
+    ->execute();
+  return $deleted;
+}
+
+/**
+ * Implements hook_node_delete().
+ */
+function advanced_forum_basic_subscriptions_node_delete($node) {
+  // Delete this node from subscriptions.
+  $deleted = db_delete('advanced_forum_basic_subscriptions')
+    ->condition('nid', $node->nid)
+    ->execute();
+  return $deleted;
+}
+
+/**
+ * Email sending functions.
+ * Subscribers are notified of
+ * 1. New Forums
+ * 2. New Topics
+ * 3. New Comments
+ */
+
+/**
+ * Implements hook_taxonomy_term_insert().
+ * If this is a forum term then notify all subscribers.
+ */
+function advanced_forum_basic_subscriptions_taxonomy_term_insert($term) {
+  // Send email to all global subscribers that a new forum has been created.
+  global $user, $base_url;
+  if ($term->vocabulary_machine_name == 'forums') {
+    $module = 'advanced_forum_basic_subscriptions';
+    $key = 'forum';
+    $from = variable_get('site_mail');
+    $to = array();
+    $result = db_query('SELECT u.name, u.mail FROM {advanced_forum_basic_subscriptions} s INNER JOIN {users} u ON s.uid = u.uid WHERE s.tid = :tid AND s.uid <> :uid', array(':tid' => 0, ':uid' => $user->uid));
+    foreach ($result as $row) {
+      // String format used to enable array_unique.
+      $to[] = "$row->name||$row->mail";
+    }
+    $tid = $term->tid;
+    $params = array(
+      'forum' => $term->name,
+      'link' => $base_url . "/forum/$tid",
+    );
+    $language = language_default();
+    $send = TRUE;
+    $result = advanced_forum_basic_subscriptions_bulk_mail($module, $key, $to, $language, $params, $from, $send);
+  }
+  return;
+}
+
+/**
+ * Implements hook_node_insert().
+ * If this is a forum topic then notify all subscribers.
+ */
+function advanced_forum_basic_subscriptions_node_insert($node) {
+  global $user, $base_url;
+  if (isset($node->forum_tid)) {
+    $tid = $node->forum_tid;
+    $module = 'advanced_forum_basic_subscriptions';
+    $key = 'topic';
+    $from = variable_get('site_mail');
+    $to = array();
+    $sql = 'SELECT u.name, u.mail FROM {advanced_forum_basic_subscriptions} s INNER JOIN {users} u ON s.uid = u.uid WHERE (s.tid = :tid1 OR s.tid = :tid2) AND s.uid <> :uid';
+    $result = db_query($sql, array(
+      ':tid1' => 0,
+      ':tid2' => $tid,
+      ':uid' => $user->uid,
+      )
+    );
+    foreach ($result as $row) {
+      // String format used to enable array_unique.
+      $to[] = "$row->name||$row->mail";
+    }
+    $to = array_unique($to);
+    $params = array(
+      'topic' => $node->title,
+      'link' => $base_url . "/node/$node->nid",
+    );
+    $language = language_default();
+    $send = TRUE;
+    $result = advanced_forum_basic_subscriptions_bulk_mail($module, $key, $to, $language, $params, $from, $send);
+  }
+  return;
+}
+
+/**
+ * Implements hook_comment_insert().
+ * If this is a forum topic comment then notify all subscribers.
+ */
+function advanced_forum_basic_subscriptions_comment_insert($comment) {
+  // Send email to all relevant subscribers that a new topic has been added.
+  global $user, $base_url;
+  $node = node_load($comment->nid);
+  if (isset($node->forum_tid)) {
+    $tid = $node->forum_tid;
+    $nid = $node->nid;
+    $module = 'advanced_forum_basic_subscriptions';
+    $key = 'comment';
+    $from = variable_get('site_mail');
+    $to = array();
+    $sql = 'SELECT u.name, u.mail FROM {advanced_forum_basic_subscriptions} s INNER JOIN {users} u ON s.uid = u.uid WHERE (s.tid = :tid1 OR s.tid = :tid2 OR s.nid = :nid) AND s.uid <> :uid';
+    $result = db_query($sql, array(
+      ':tid1' => 0,
+      ':tid2' => $tid,
+      ':nid' => $nid,
+      ':uid' => $user->uid,
+      )
+    );
+    foreach ($result as $row) {
+      // String format used to enable array_unique.
+      $to[] = "$row->name||$row->mail";
+    }
+    $to = array_unique($to);
+    $params = array(
+      'comment' => $comment->subject,
+      'link' => $base_url . "/node/$nid",
+    );
+    $language = language_default();
+    $send = TRUE;
+    $result = advanced_forum_basic_subscriptions_bulk_mail($module, $key, $to, $language, $params, $from, $send);
+  }
+  return;
+}
+
+/**
+ * Implements hook_mail().
+ */
+function advanced_forum_basic_subscriptions_mail($key, &$message, $params) {
+  $options = array(
+    'langcode' => $message['language']->language,
+  );
+
+  switch ($key) {
+    case 'forum':
+      $message['subject'] = t('@site-name Forum update', array('@site-name' => variable_get('site_name', 'Drupal')), $options);
+      $message['body'][] = t('A new forum, "@forum", has been created.', array('@forum' => $params['forum']), $options);
+      $message['body'][] = t('Visit the new forum here: @link', array('@link' => $params['link']), $options);
+      break;
+
+    case 'topic':
+      $message['subject'] = t('@site-name Forum update', array('@site-name' => variable_get('site_name', 'Drupal')), $options);
+      $message['body'][] = t('A new topic, "@topic", has been created.', array('@topic' => $params['topic']), $options);
+      $message['body'][] = t('Visit the new topic here: @link', array('@link' => $params['link']), $options);
+      break;
+
+    case 'comment':
+      $message['subject'] = t('@site-name Forum update', array('@site-name' => variable_get('site_name', 'Drupal')), $options);
+      $message['body'][] = t('A new comment, "@comment", has been created.', array('@comment' => $params['comment']), $options);
+      $message['body'][] = t('Visit the new comment here: @link', array('@link' => $params['link']), $options);
+      break;
+  }
+}
+
+/**
+ * This function is an adaptation of core drupal_mail to allow $to to be passed
+ * as an array of user names and email addresses
+ *
+ * @see drupal_mail()
+ * 
+ */
+function advanced_forum_basic_subscriptions_bulk_mail($module, $key, $to, $language, $params = array(), $from = NULL, $send = TRUE) {
+  $default_from = variable_get('site_mail', ini_get('sendmail_from'));
+
+  // Bundle up the variables into a structured array for altering.
+  $message = array(
+    'id'       => $module . '_' . $key,
+    'module'   => $module,
+    'key'      => $key,
+    'from'     => isset($from) ? $from : $default_from,
+    'language' => $language,
+    'params'   => $params,
+    'send'     => TRUE,
+    'subject'  => '',
+    'body'     => array(),
+  );
+
+  // Build the default headers.
+  $headers = array(
+    'MIME-Version'              => '1.0',
+    'Content-Type'              => 'text/plain; charset=UTF-8; format=flowed; delsp=yes',
+    'Content-Transfer-Encoding' => '8Bit',
+    'X-Mailer'                  => 'Drupal',
+  );
+  if ($default_from) {
+    // To prevent e-mail from looking like spam, the addresses in the Sender and
+    // Return-Path headers should have a domain authorized to use the
+    // originating SMTP server.
+    $headers['From'] = $headers['Sender'] = $headers['Return-Path'] = $default_from;
+  }
+  if ($from) {
+    $headers['From'] = $from;
+  }
+  $message['headers'] = $headers;
+
+  // Build the e-mail (get subject and body, allow additional headers) by
+  // invoking hook_mail() on this module. We cannot use module_invoke() as
+  // we need to have $message by reference in hook_mail().
+  if (function_exists($function = $module . '_mail')) {
+    $function($key, $message, $params);
+  }
+
+  // Invoke hook_mail_alter() to allow all modules to alter the resulting
+  // e-mail.
+  drupal_alter('mail', $message);
+
+  // Retrieve the responsible implementation for this message.
+  $system = drupal_mail_system($module, $key);
+
+  // Format the message body.
+  $message = $system->format($message);
+
+  // Optionally send e-mail.
+  if ($send) {
+    // The original caller requested sending. Sending was canceled by one or
+    // more hook_mail_alter() implementations. We set 'result' to NULL, because
+    // FALSE indicates an error in sending.
+    if (empty($message['send'])) {
+      $message['result'] = NULL;
+    }
+    // Sending was originally requested and was not canceled.
+    else {
+      $body = $message['body'];
+      $options = array(
+        'langcode' => $message['language']->language,
+      );
+      foreach ($to as $recipient) {
+        $userdetails = explode('||', $recipient);
+        $username = $userdetails[0];
+        $useremail = $userdetails[1];
+        $message['to'] = "$username <$useremail>";
+        $message['body'] = t('Dear @username,', array('@username' => $username), $options) . "\r\n\r\n" . $body;
+        $message['result'] = $system->mail($message);
+        // Log errors.
+        if (!$message['result']) {
+          watchdog('mail', 'Error sending e-mail (from %from to %to).', array('%from' => $message['from'], '%to' => $message['to']), WATCHDOG_ERROR);
+        }
+      }
+    }
+  }
+  return $message;
+}
+
+/**
+ * This function is the callback for the forum/mysubs tab
+ * It returns a form that shows all subscriptions for the current user
+ * and lets the user cancel subscriptions
+ *
+ * @see advanced_forum_basic_subscriptions_mysubs_validate()
+ * @see advanced_forum_basic_subscriptions_mysubs_submit
+ */
+function advanced_forum_basic_subscriptions_mysubs() {
+  drupal_set_title(t('My Forum Subscriptions'));
+  global $user;
+
+  $header = array(
+    'forum' => array('data' => t('Forum'), 'field' => 't.name', 'sort' => 'asc'),
+    'topic' => array('data' => t('Topic'), 'field' => 'n.title'),
+  );
+
+  $query = db_select('advanced_forum_basic_subscriptions', 's');
+  $query->condition('s.uid', $user->uid, '=');
+  $query->leftJoin('taxonomy_term_data', 't', 's.tid = t.tid');
+  $query->leftJoin('node', 'n', 's.nid = n.nid');
+
+  $count_query = clone $query;
+  $count_query->addExpression('COUNT(s.sid)');
+
+  $query = $query->extend('PagerDefault')->extend('TableSort');
+  $query
+    ->fields('s', array('sid'))
+    ->fields('s', array('tid'))
+    ->fields('s', array('nid'))
+    ->fields('t', array('name'))
+    ->fields('n', array('title'))
+    ->limit(50)
+    ->orderByHeader($header)
+    ->setCountQuery($count_query);
+  $result = $query->execute();
+  $form['options'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Update options'),
+    '#attributes' => array('class' => array('container-inline')),
+  );
+  $options = array();
+  $options['cancel'] = t('Cancel the selected subscription(s)');
+  $form['options']['operation'] = array(
+    '#type' => 'select',
+    '#title' => t('Operation'),
+    '#title_display' => 'invisible',
+    '#options' => $options,
+    '#default_value' => 'cancel',
+  );
+  $options = array();
+  $form['options']['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Update'),
+  );
+
+  foreach ($result as $subscription) {
+    if ($subscription->tid == 0) {
+      $forum = t('* All Forums *');
+      $topic = '';
+    }
+    elseif ($subscription->nid == 0) {
+      $forum = $subscription->name;
+      $topic = t('* All Topics *');
+    }
+    else {
+      $forum = $subscription->name;
+      $topic = $subscription->title;
+    }
+    $options[$subscription->sid] = array(
+      'forum' => $forum,
+      'topic' => $topic,
+    );
+  }
+
+  $form['subscriptions'] = array(
+    '#type' => 'tableselect',
+    '#header' => $header,
+    '#options' => $options,
+    '#empty' => t('You have no subscriptions.'),
+  );
+  $form['pager'] = array('#markup' => theme('pager'));
+
+  return $form;
+}
+
+/**
+ * Validate the subscriptions administration update form.
+ *
+ * @see advanced_forum_basic_subscriptions_mysubs_submit
+ */
+function advanced_forum_basic_subscriptions_mysubs_validate($form, &$form_state) {
+  $form_state['values']['subscriptions'] = array_filter($form_state['values']['subscriptions']);
+  if (count($form_state['values']['subscriptions']) == 0) {
+    form_set_error('', t('No subscriptions selected.'));
+  }
+}
+
+/**
+ * Submit the subscriptions administration update form.
+ *
+ * @see advanced_forum_basic_subscriptions_mysubs_validate()
+ */
+function advanced_forum_basic_subscriptions_mysubs_submit($form, &$form_state) {
+
+  // Filter out unchecked subscriptions.
+  $subscriptions = array_filter($form_state['values']['subscriptions']);
+  $operation = $form_state['values']['operation'];
+  if ($operation == 'cancel') {
+    foreach ($subscriptions as $sid => $value) {
+      $deleted = db_delete('advanced_forum_basic_subscriptions')
+        ->condition('sid', $sid)
+        ->execute();
+    }
+    drupal_set_message(t('The selected subscriptions have been cancelled.'));
+  }
+}
+
+/**
+ * Create a "subscribe" / "unsubscribe" link.
+ *
+ * @param $tid
+ *   A term id representing the Forum.
+ *   The special value zero represents global subscription.
+ * @param $nid
+ *   A node id representing the Forum Topic.
+ *   The special value zero represents whole Forum subscription.
+ *
+ * @return
+ *   A hyperlink to reverse the subscription for the selected
+ *   Forum or Topic.
+ */
+function advanced_forum_basic_subscriptions_makelink($tid, $nid) {
+
+  $basepath = 'forum';
+
+  // Check if this user is already subscribed to this entity or not.
+  global $user;
+  $uid = $user->uid;
+  $result = db_select('advanced_forum_basic_subscriptions', 's')
+    ->fields('s', array('sid'))
+    ->condition('uid', $uid)
+    ->condition('tid', $tid)
+    ->condition('nid', $nid)
+    ->execute();
+  if ($result->rowCount()) {
+    $url = $basepath . '/unsubscribe/' . $tid . '/' . $nid;
+    $text = 'unsubscribe';
+  }
+  else {
+    $url = $basepath . '/subscribe/' . $tid . '/' . $nid;
+    $text = "subscribe";
+  }
+  
+  $options = array(
+    'query' => drupal_get_destination(),
+    'attributes' => array(
+      'class' => array($text),
+    ),
+  );
+  $content = l(t($text), $url, $options);
+  return $content;
+}
+
+/**
+ * Subscribe a user to a forum or topic.
+ *
+ * @param $tid
+ *   A term id representing the Forum.
+ *   The special value zero represents global subscription.
+ * @param $nid
+ *   A node id representing the Forum Topic.
+ *   The special value zero represents whole Forum subscription.
+ *
+ * @return
+ *   The subscription id from the database,
+ *   or FALSE in case of non-integer parameter(s).
+ */
+function advanced_forum_basic_subscriptions_subscribe($tid, $nid) {
+  if (preg_match('{^[0-9]*$}', $tid) && preg_match('{^[0-9]*$}', $nid)) {
+    global $user;
+    $uid = $user->uid;
+    $fields['uid'] = $uid;
+    $fields['tid'] = $tid;
+    $fields['nid'] = $nid;
+    $sid = db_insert('advanced_forum_basic_subscriptions')
+      ->fields($fields)
+      ->execute();
+    return $sid;
+  }
+  else {
+    return FALSE;
+  }
+}
+
+/**
+ * Unsubscribe a user from a forum or topic.
+ *
+ * @param $tid
+ *   A term id representing the Forum.
+ *   The special value zero represents global subscription.
+ * @param $nid
+ *   A node id representing the Forum Topic.
+ *   The special value zero represents whole Forum subscription.
+ *
+ * @return
+ *   The number of subscriptions deleted from the database,
+ *   or FALSE in case of non-integer parameter(s).
+ */
+function advanced_forum_basic_subscriptions_unsubscribe($tid, $nid) {
+  if (preg_match('{^[0-9]*$}', $tid) && preg_match('{^[0-9]*$}', $nid)) {
+    global $user;
+    $uid = $user->uid;
+    $deleted = db_delete('advanced_forum_basic_subscriptions')
+      ->condition(db_and()
+        ->condition('uid', $uid)
+        ->condition('tid', $tid)
+        ->condition('nid', $nid))
+      ->execute();
+    return $deleted;
+  }
+  else {
+    return FALSE;
+  }
+}

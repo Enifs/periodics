@@ -1,0 +1,7 @@
+
+name = _Cloudless Day Stacked plus subscriptions
+description = A style with light blues reminiscent of the sky.
+version = 2.x
+core = 7.x
+base style = cloudless_day
+extra style = naked_stacked
