@@ -1,7 +1,0 @@
-
-name = Advanced Forum Basic Subscriptions
-description = Minimalistic Subscription module for Advanced Forums.
-package = "Other"
-dependencies[] = advanced_forum
-core = 7.x
-configure = admin/config/content/advanced-forum

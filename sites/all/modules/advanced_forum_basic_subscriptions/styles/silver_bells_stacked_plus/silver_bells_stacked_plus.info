@@ -1,7 +1,0 @@
-
-name = _Silver Bells Stacked plus subscriptions
-description = Shades of grey and white with bells. Author Pane on top.
-version = 2.x
-core = 7.x
-base style = silver_bells
-extra style = naked_stacked
