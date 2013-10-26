@@ -1,0 +1,28 @@
+<?php
+
+/**
+ * Implements hook_form_alter(&$form, &$form_state, $form_id).
+ */
+function ballare_mod_form_alter(&$form, &$form_state, $form_id) {
+//
+//  if ($form_id=='celebration_node_form'){
+//    $form['field_calendar_date']['und'][0]['#element_validate'][1] = $form['field_calendar_date']['und'][0]['#element_validate'][0];
+//    $form['field_calendar_date']['und'][0]['#element_validate'][0] = 'ballare_date_validate';
+//  }
+  $module_path = drupal_get_path('module', 'ballare_mod');
+  drupal_add_css($module_path . '/ballare_mod.css');
+}
+
+function ballare_date_validate($element, &$form_state) {
+//  $element['#value']['value']['year'] = 2012;
+//  if ($element['#value']['value']['year']){
+//    
+//  }
+//ob_start();
+//print_r($element);
+//$output = ob_get_contents();
+//ob_end_clean();
+//$h = fopen('log.txt', 'w');
+//fwrite($h, $output);
+//fclose($h);
+}
