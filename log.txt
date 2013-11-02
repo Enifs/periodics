@@ -1,0 +1,67 @@
+Array
+(
+    [0] => stdClass Object
+        (
+            [uid] => 2
+            [name] => John
+            [pass] => $S$D3NHBLgGlgCeUBltquDBdLbPibiKqexe0emBXSDv8918dTZ/VRYJ
+            [mail] => john@example.com
+            [theme] => 
+            [signature] => 
+            [signature_format] => rich_text
+            [created] => 1377802999
+            [access] => 1383413489
+            [login] => 1383407676
+            [status] => 1
+            [timezone] => Europe/Riga
+            [language] => en
+            [picture] => 
+            [init] => john@example.com
+            [data] => Array
+                (
+                    [ckeditor_default] => t
+                    [ckeditor_show_toggle] => t
+                    [ckeditor_width] => 100%
+                    [ckeditor_lang] => en
+                    [ckeditor_auto_lang] => t
+                    [contact] => 1
+                    [l10n_client_disabled] => 
+                )
+
+            [roles] => Array
+                (
+                    [2] => authenticated user
+                    [4] => moderator
+                )
+
+            [rdf_mapping] => Array
+                (
+                    [rdftype] => Array
+                        (
+                            [0] => sioc:UserAccount
+                        )
+
+                    [name] => Array
+                        (
+                            [predicates] => Array
+                                (
+                                    [0] => foaf:name
+                                )
+
+                        )
+
+                    [homepage] => Array
+                        (
+                            [predicates] => Array
+                                (
+                                    [0] => foaf:page
+                                )
+
+                            [type] => rel
+                        )
+
+                )
+
+        )
+
+)

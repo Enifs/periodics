@@ -1,24 +1,10 @@
 (function ($) {
 
-Drupal.behaviors.ballare = {
-  attach: function (context) {
-    var settings = {
-      dateFormat: Drupal.settings.ballare.dateformat,
-      autoSize: true,
-      changeMonth: true,
-      changeYear: true,
-      maxDate: '+100y',
-      minDate: '-20y',
-      yearRange: '-20:+100',
-      constrainInput: false,
-      firstDay: Drupal.settings.ballare.firstDay
-    };
-
-    var noYearSettings = jQuery.extend({}, settings);
-    noYearSettings.dateFormat = Drupal.settings.ballare.dateformat_noyear;
-
-    $('.ballare-datepicker', context).datepicker(settings);
-    $('.ballare-datepicker-noyear', context).datepicker(noYearSettings);
+Drupal.behaviors.selectAll = {
+  attach: function () {
+    $('body.page-node .form-type-checkboxes > label').click(function() {
+        $(this).nextAll('.form-checkboxes').find('input[type="checkbox"]').trigger('click');
+    });
   }
 };
 
