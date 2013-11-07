@@ -39,20 +39,33 @@ function ballare_mod_menu() {
   $items = array();
   $items['subscribe_others'] = array(
     'title' => t('Bulk subscription form'),
-    'page callback' => 'ballare_render_subscribe_form',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('ballare_subscribe_form'),
     'access arguments' => array('access content'),
     'description' => t('Subscribe others to content'),
+    'type' => MENU_CALLBACK,
+  );
+  $items['node-autocomplete'] = array(
+    'page callback' => 'node_autocomplete',
+    'access arguments' => array('view published content'),
     'type' => MENU_CALLBACK,
   );
   return $items;
 }
 
-function ballare_render_subscribe_form() {
-  return drupal_get_form('ballare_subscribe_form');
-}
+/**
+ * Generate the actual forceful subscription page
+ */
+function ballare_subscribe_form($form, &$form_state) {
+  $form['force_subscribe'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Subscribe users to chosen content:'),
+    '#collapsible' => FALSE,
+    '#collapsed' => FALSE,
+  );
 
-function ballare_subscribe_form($form_state) {
-// Build the sortable table header.
+  /* USERS ------------------------------------------------------------------ */
+  // Build the sortable table header.
   $header = array(
     'title' => array('data' => t('Name'), 'field' => 'u.name'),
   );
@@ -73,66 +86,34 @@ function ballare_subscribe_form($form_state) {
       'title' => $subscriber->name,
     );
   }
-  $form['force_subscribe'] = array(
-    '#type' => 'fieldset',
-    '#title' => t('Subscribe the following users:'),
-    '#collapsible' => FALSE,
-    '#collapsed' => FALSE,
-  );
+
   //Build the tableselect.
   $form['force_subscribe']['subscribers'] = array(
     '#type' => 'tableselect',
     '#header' => $header,
     '#options' => $options,
-    '#empty' => t('No content available.'),
+    '#empty' => t('No users available.'),
   );
-  
-  
-  
-  
-  //!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-  // if (page argument = null) show this:
-  if (TRUE) {
-    $form['force_subscribe']['content_item'] = array(
+
+  /* NODES ------------------------------------------------------------------ */
+  // if there's no page argument, we'll assume that all nodes need to be offered
+  if (empty($form_state['build_info']['args']) || $form_state['build_info']['args'][0] == 0) {
+    $form['force_subscribe']['nodes'] = array(
       '#type' => 'textfield',
       '#title' => "The users will be subscribed to this content item:",
+      '#autocomplete_path' => 'node-autocomplete',
     );
   }
-  // if (page argument = numeric) show this:
-  else if (FALSE) {
-// Build the sortable table header.
-    $node_header = array(
-      'title' => array('data' => t('Name'), 'field' => 'u.name'),
-    );
-    //Get the user data.
-    $query = db_select('users', 'u')
-        ->fields('u', array('uid'))
-        ->condition('uid', 1, '>');
-    $uids = $query
-        ->extend('TableSort')
-        ->orderByHeader($header)
-        ->execute()
-        ->fetchCol();
-    $users = user_load_multiple($uids);
-
-    $options = array();
-    foreach ($users as $subscriber) {
-      $options[$subscriber->uid] = array(
-        'title' => $subscriber->name,
-      );
-    }
-    //Build the tableselect.
+  // if a good numeric page argument given, we can set it as default node
+  else if (!empty($form_state['build_info']['args']) && is_numeric($form_state['build_info']['args'][0]) && $form_state['build_info']['args'][0] > 0) {
+    $known_node = node_load($form_state['build_info']['args'][0]);
     $form['force_subscribe']['nodes'] = array(
-      '#type' => 'tableselect',
-      '#header' => $node_header,
-      '#options' => $options,
-      '#empty' => t('No content available.'),
+      '#type' => 'textfield',
+      '#title' => "The users will be subscribed to this content item:",
+      '#autocomplete_path' => 'node-autocomplete',
+      '#default_value' => $known_node->title,
     );
   }
-
-
-
-
 
   $form['submit'] = array(
     '#type' => 'submit',
@@ -151,5 +132,23 @@ function my_module_my_form_validate($form, &$form_state) {
 // Adds a submit handler/function to our form to send a successful
 // completion message to the screen.
 function my_module_my_form_submit($form, &$form_state) {
+  // Add the subscription functionality here:
+  // TODO:
   drupal_set_message(t('The form has been submitted.'));
+}
+
+function node_autocomplete($text) {
+  $results = array();
+  $query = db_select('node', 'n');
+  $query
+      ->condition('n.title', '%' . db_like($text) . '%', 'LIKE')
+      ->fields('n', array('title'))
+      ->orderBy('title', 'ASC');
+  $colors = $query->execute();
+
+  foreach ($colors as $row) {
+    $results[$row->title] = check_plain($row->title);
+  }
+
+  drupal_json_output($results);
 }
