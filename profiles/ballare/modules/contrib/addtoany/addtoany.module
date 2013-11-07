@@ -29,13 +29,16 @@ function addtoany_permission() {
 /**
  * Implementation of hook_node_view().
  */
-function addtoany_node_view($node, $view_mode) { 
-  $links = array();
+function addtoany_node_view($node, $view_mode) {
   $types = variable_get('addtoany_nodetypes', array('page', 'article'));
   $teaser = ($view_mode == 'teaser') ? TRUE : FALSE;
-  $show  = (!empty($node->type) && in_array($node->type, $types, TRUE) && ($node->status == 1) && 
-           (($teaser && variable_get('addtoany_display_in_teasers', '1') != 0) ||
-           (!$teaser && variable_get('addtoany_display_in_nodelink', '1') != 0)));
+  
+  // Display in link section?
+  $show = (!empty($node->type) && in_array($node->type, $types, TRUE) && ($node->status == 1) && (variable_get('addtoany_display_in_nodelink', '1') != 0)
+    && (
+      (!$teaser) || ($teaser && variable_get('addtoany_display_in_teasers', '1') != 0)
+    )
+  );
            
   if ($show) {
 	$node->content['links']['#links']['addtoany'] = array(
@@ -44,7 +47,12 @@ function addtoany_node_view($node, $view_mode) {
       );
   }
   
-  $show  = (!empty($node->type) && in_array($node->type, $types, TRUE) && ($node->status == 1) && variable_get('addtoany_display_in_nodecont', '0'));
+  // Display in content section?
+  $show = (!empty($node->type) && in_array($node->type, $types, TRUE) && ($node->status == 1) && (variable_get('addtoany_display_in_nodecont', '0') != 0)
+     && ( 
+       (!$teaser) || ($teaser && variable_get('addtoany_display_in_teasers', '1') != 0)
+    )
+  );
   $weight = variable_get('addtoany_display_weight', 40);
       
   if ($show) {
@@ -240,9 +248,13 @@ function _addtoany_create_button($node=NULL) {
 	
 	$javascript = _addtoany_create_script($_addtoany_counter, $link_name, $link_url);
 	
+	$buttons_size = variable_get('addtoany_buttons_size', '16');
 	$button_setting = variable_get('addtoany_image', 'share_save_171_16.png|171|16');
 	
-	if ($button_setting == "custom") {
+	if ($button_setting == "a2a_svg_32") {
+		$button_setting		= 'text';
+		$button_text		= '';
+	} elseif ($button_setting == "custom") {
 		$button_image 		= check_url(variable_get('addtoany_custom_image', ''));
 		$button_width    	= '';
 		$button_height		= ''; 
@@ -254,7 +266,8 @@ function _addtoany_create_button($node=NULL) {
 		$button_image 	= $base_path . drupal_get_path('module', 'addtoany') . '/images/' . $button_filename;
 	}
 	
-	$button_text = check_plain(variable_get('addtoany_link_text', ''));
+	// Permit blank button_text (so AddToAny Kit can set the icon) if set above, or use addtoany_link_text if set
+	$button_text = (isset($button_text)) ? $button_text : check_plain(variable_get('addtoany_link_text', ''));
 	if (strlen($button_text) > 0)
 		$button_text = ' ' . $button_text; 
 	
@@ -267,11 +280,12 @@ function _addtoany_create_button($node=NULL) {
 	);
 	 
 	return ( sprintf('
-		<span class="a2a_kit a2a_target addtoany_list" id="da2a_%s">
+		<span class="a2a_kit%s a2a_target addtoany_list" id="da2a_%s">
 			%s<a%s href="http://www.addtoany.com/share_save#url=%s&amp;title=%s">%s</a>%s
 		</span>
 		%s
 		',
+		($buttons_size == '32') ? ' a2a_kit_size_32' : '',
 		$_addtoany_counter,
 		($additional_html_placement == 'before') ? $additional_html : '',
 		' class="a2a_dd addtoany_share_save"',
